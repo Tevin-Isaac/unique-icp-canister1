@@ -8,7 +8,7 @@ import {
     TransferResult,
 } from 'azle/canisters/ledger';
 
-import {Token, InitPayload, Proposal, ProposalPayload, JoinPayload, RedeemPayload, TransferPayload, QueryPayload, AddressPayload, DaoData } from '../types';
+import {Token, InitPayload, Proposal, ProposalPayload, JoinPayload, RedeemPayload, TransferPayload, QueryPayload, AddressPayload, DaoData } from './types';
 
 const proposalStorage = new StableBTreeMap<int32, Proposal>(0, 44, 10000);
 const sharesStorage = new StableBTreeMap<Principal, nat64>(1, 100, 100);
@@ -138,7 +138,7 @@ export async function joinDAO(payload: JoinPayload): Promise<Result<string, stri
     // update available shares
     availableFunds = availableFunds + amount;
 
-    return Result.Ok<string, string>("DAO joined successfully")
+    return Result.Ok<string, string>("DAO joined successfully");
 }
 
 $query
@@ -214,16 +214,15 @@ export async function redeemShares(payload: RedeemPayload):  Promise<Result<stri
 
     availableFunds = availableFunds - amount;
 
-    return Result.Ok<string, string>("shares redeemed succesfully")
+    return Result.Ok<string, string>("shares redeemed succesfully");
 }
-
 
 // function to transfer shares from one user to another
 $update 
 export function transferShares(payload: TransferPayload): Result<string, string> {
     // check if canister is already initialized
     if(!initialized){
-        ic.trap("canister not yet initialized")
+        ic.trap("canister not yet initialized");
     }
 
     let caller = ic.caller();
@@ -234,7 +233,7 @@ export function transferShares(payload: TransferPayload): Result<string, string>
     const updatedFromShares = match(sharesStorage.get(caller), {
         Some: shares => {
             if(shares < amount){
-                ic.trap("not enough shares")
+                ic.trap("not enough shares");
             };
 
             return shares - amount;
@@ -258,7 +257,7 @@ export function transferShares(payload: TransferPayload): Result<string, string>
     // update the recipients record in the storage
     sharesStorage.insert(to, updatedToShares);
 
-    return Result.Ok<string, string>("shares transferred succesfully")
+    return Result.Ok<string, string>("shares transferred succesfully");
 }
 
 // function to create a new proposal
@@ -266,7 +265,7 @@ $update
 export function createProposal(payload: ProposalPayload): Result<string, string>{
     // check if canister is already initialized
     if(!initialized){
-        ic.trap("canister not yet initialized")
+        ic.trap("canister not yet initialized");
     }
     
     let caller = ic.caller();
@@ -302,16 +301,15 @@ export function createProposal(payload: ProposalPayload): Result<string, string>
 
     nextProposalId = nextProposalId + 1;
 
-    return Result.Ok<string, string>("proposal created succesfully")
+    return Result.Ok<string, string>("proposal created succesfully");
 }
-
 
 // function to vote for a proposal
 $update
 export function voteProposal(proposal: QueryPayload): Result<string, string>{
     // check if canister is already initialized
     if(!initialized){
-        ic.trap("canister not yet initialized")
+        ic.trap("canister not yet initialized");
     }
 
     let caller = ic.caller();
@@ -326,7 +324,7 @@ export function voteProposal(proposal: QueryPayload): Result<string, string>{
     let address = caller.toString();
 
     // create identifier with user address and proposal id
-    let id =  `${address + proposalId.toString()}`
+    let id =  `${address + proposalId.toString()}`;
 
     // check if investor has voted
     let hasVoted = match(votesMapping.get(id), {
@@ -344,7 +342,7 @@ export function voteProposal(proposal: QueryPayload): Result<string, string>{
         Some: proposal => {
 
             if(ic.time() > proposal.ends){
-                ic.trap("proposal has ended")
+                ic.trap("proposal has ended");
             };
 
             const votes = proposal.votes + shares;
@@ -360,22 +358,20 @@ export function voteProposal(proposal: QueryPayload): Result<string, string>{
     // set investor to hasVoted
     votesMapping.insert(id, true);
 
-    return Result.Ok<string, string>("voted succesfully")
+    return Result.Ok<string, string>("voted succesfully");
 }
 
-
 // function to execute a proposal, can only be called by the contract admin
-$update 
-export function executeProposal(payload: QueryPayload): Promise<Result<string, string>> {
+$update
+export function executeProposal(payload: QueryPayload): Result<string, string> {
     // check if canister is already initialized
     if(!initialized){
-        ic.trap("canister not yet initialized")
+        ic.trap("canister not yet initialized");
     }
 
     let caller = ic.caller();
     let proposalId = payload.proposalId;
 
-    let executed: boolean;
     // check if caller is admin
     if(caller.toString() !== admin.toString()){
         ic.trap("only admin can execute proposal");
@@ -383,14 +379,14 @@ export function executeProposal(payload: QueryPayload): Promise<Result<string, s
 
     // get proposal information and update
     return match( proposalStorage.get(proposalId), {
-        Some: async (proposal) =>
+        Some: (proposal) =>
         {
             if(ic.time() < proposal.ends){
-                ic.trap("cannot execute proposal before end date")
+                ic.trap("cannot execute proposal before end date");
             };
 
             if(proposal.ended){
-                ic.trap("cannot execute proposal already ended")
+                ic.trap("cannot execute proposal already ended");
             }
             
             if(proposal.votes * 100n / totalShares >=  quorum){ 
@@ -400,44 +396,138 @@ export function executeProposal(payload: QueryPayload): Promise<Result<string, s
                 if(network == 0){
                     let status = (await tokenCanister.transfer(canisterAddress, proposal.recipient, proposal.amount).call()).Ok;   
                     if(!status){
-                        ic.trap("failed to transfer")
+                        ic.trap("failed to transfer");
                     }
                 } else {
                     // mainnet function
                     await transfer(proposal.recipient, proposal.amount);
                 }
 
-                executed = true;
-            }else{
+                lockedFunds = lockedFunds - proposal.amount;
+                proposalStorage.remove(proposalId);
+
+                return Result.Ok<string, string>("proposal completed");
+            } else {
                 //release funds back to available funds
                 availableFunds = availableFunds + proposal.amount;
-                executed = false;
+                proposalStorage.remove(proposalId);
+                return Result.Err<string, string>("proposal did not reach quorum");
             }
-
-            lockedFunds = lockedFunds - proposal.amount;
-
-            const updatedProposal: Proposal = {...proposal, ended: true, executed: executed};
-
-            proposalStorage.insert(proposalId, updatedProposal);
-
-            return Result.Ok<string, string>("proposal completed")
         },
-        None: async () => Result.Err<string, string>("Error")
-    })
+        None: () => Result.Err<string, string>("Error")
+    });
 }
 
-$query;
+$query
 export function getProposals(): Result<Vec<Proposal>, string> {
     return Result.Ok(proposalStorage.values());
 }
 
-
-$query;
+$query
 export function getProposal(proposalId: int32): Result<Proposal, string> {
     return match(proposalStorage.get(proposalId), {
         Some: (proposal) => Result.Ok<Proposal, string>(proposal),
         None: () => Result.Err<Proposal, string>(`proposal with id=${proposalId} not found`)
     });
+}
+
+$update
+export async function setContributionEndTime(newTime: nat64): Promise<Result<string, string>> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (newTime <= ic.time()) {
+        return Result.Err<string, string>("New time must be in the future");
+    }
+
+    contributionEnds = newTime;
+    return Result.Ok<string, string>("Contribution end time updated successfully");
+}
+
+$update
+export function increaseQuorum(newQuorum: nat64): Result<string, string> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (newQuorum < 0 || newQuorum > 100) {
+        return Result.Err<string, string>("Quorum must be between 0 and 100");
+    }
+
+    quorum = newQuorum;
+    return Result.Ok<string, string>("Quorum updated successfully");
+}
+
+$update
+export function updateVoteTime(newVoteTime: nat64): Result<string, string> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (newVoteTime <= 0) {
+        return Result.Err<string, string>("Vote time must be greater than 0");
+    }
+
+    voteTime = newVoteTime;
+    return Result.Ok<string, string>("Vote time updated successfully");
+}
+
+$update
+export function setAdmin(newAdmin: Principal): Result<string, string> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (ic.caller().toString() !== admin.toString()) {
+        ic.trap("Only the current admin can set a new admin");
+    }
+
+    admin = newAdmin;
+    return Result.Ok<string, string>("Admin updated successfully");
+}
+
+$update
+export function updateNetwork(newNetwork: int8): Result<string, string> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (newNetwork < 0 || newNetwork > 1) {
+        return Result.Err<string, string>("Network must be 0 (local) or 1 (mainnet)");
+    }
+
+    network = newNetwork;
+    return Result.Ok<string, string>("Network updated successfully");
+}
+
+$update
+export function updateCanisterAddress(newAddress: Address): Result<string, string> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    canisterAddress = newAddress;
+    icpCanister = new Ledger(Principal.fromText(newAddress.toText()));
+    return Result.Ok<string, string>("Canister address updated successfully");
+}
+
+@update
+export async function initializeToken(
+    name: string,
+    symbol: string,
+    supply: nat64
+): Promise<Result<string, string>> {
+    if (!initialized) {
+        ic.trap("canister not yet initialized");
+    }
+
+    if (network == 0) {
+        return Result.Err<string, string>("Cannot initialize token on the local network");
+    }
+
+    await tokenCanister.initializeSupply(name, canisterAddress, symbol, supply).call();
+    return Result.Ok<string, string>("Token initialized successfully");
 }
 
 // Helper functions
@@ -452,9 +542,9 @@ export async function getFaucetTokens(): Promise<Result<boolean, string>>{
     return await tokenCanister.transfer(canisterAddress, caller.toString(), 100n).call();   
 }
 
-$update;
+$update
 export async function walletBalanceLocal(payload: AddressPayload): Promise<Result<nat64, string>> {
-    let address = payload.address
+    let address = payload.address;
     if(address == ""){
         address = ic.caller().toString();
     }
@@ -493,7 +583,7 @@ async function deposit(
             })
             .call();
     } else{
-        ic.trap("Fund your account first")
+        ic.trap("Fund your account first");
     }
 }
 
@@ -520,7 +610,7 @@ async function transfer(
         })
         .call();
     }else{
-        ic.trap("Account is empty")
+        ic.trap("Account is empty");
     }
 }
 
